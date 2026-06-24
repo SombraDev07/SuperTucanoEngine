@@ -2,6 +2,7 @@
 #include "Tucano/Core/Input.h"
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include "imgui.h"
 
 namespace Tucano {
 
@@ -10,6 +11,15 @@ FPSCameraController::FPSCameraController(Camera* camera) : m_Camera(camera) {
 }
 
 void FPSCameraController::Update(float deltaTime) {
+    if (ImGui::GetCurrentContext() && (ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard)) {
+        if (m_Active) {
+            Input::SetCursorMode(GLFW_CURSOR_NORMAL);
+            m_Active = false;
+        }
+        UpdateViewMatrix();
+        return;
+    }
+
     // Right click to enable camera look
     if (Input::IsMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
         if (!m_Active) {

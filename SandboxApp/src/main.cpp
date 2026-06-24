@@ -1,4 +1,5 @@
 #include "Tucano/Core/Logger.h"
+// Forcing recompilation to fix ABI / stack size issue with Renderer struct
 #include "Tucano/Core/Window.h"
 #include "Tucano/Core/Input.h"
 #include "Tucano/Render/VulkanContext.h"
@@ -24,9 +25,13 @@ int main() {
     Input::Init(window.GetNativeWindow());
 
     VulkanContext vulkanContext(&window);
+    TUCANO_INFO("VulkanContext initialized.");
+    
     Renderer renderer(&vulkanContext);
+    TUCANO_INFO("Renderer initialized.");
 
     renderer.InitPipeline("assets/shaders/pbr.vert", "assets/shaders/pbr.frag");
+    TUCANO_INFO("Pipelines initialized.");
 
     World world;
     
@@ -37,9 +42,11 @@ int main() {
     groundTransform.Scale = glm::vec3(10.0f, 1.0f, 10.0f);
     groundTransform.Position = glm::vec3(0.0f, -1.0f, 0.0f);
     world.GetRegistry().emplace<MeshComponent>(groundEntity, planeMesh);
+    TUCANO_INFO("Ground added.");
 
     // Load glTF Box
     ModelLoader::LoadGLTF("assets/models/Industrial_BrickRuin_Window_Brick_Straight_01_vdcjcfx_Raw.gltf", world, &vulkanContext);
+    TUCANO_INFO("Model loaded.");
 
     Camera camera(45.0f, (float)window.GetWidth() / (float)window.GetHeight(), 0.1f, 10000.0f);
     FPSCameraController cameraController(&camera);

@@ -1,0 +1,105 @@
+#version 450
+#include "atmosphere_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(set = 0, binding = 0, rgba16f) writeonly uniform image3D outAerialPerspectiveLUT;
+layout(set = 0, binding = 1) uniform sampler2D transmittanceLUT;
+layout(set = 0, binding = 2) uniform sampler2D multiScatLUT;
+
+layout(std140, set = 0, binding = 3) uniform AtmosphereUBO {
+    AtmosphereParameters params;
+    vec4 CameraPosition;
+    mat4 InvViewProj;
+    vec4 PostProcessParams;
+    vec4 AtmosphereFlags; // x = EnableMultiScattering, y = EnableAerialPerspective, z = SkyIntensity, w = padding
+} ubo;
+
+void main() {
+    ivec3 texel = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 size = imageSize(outAerialPerspectiveLUT);
+    if (texel.x >= size.x || texel.y >= size.y || texel.z >= size.z) return;
+
+    vec2 uv = (vec2(texel.xy) + 0.5) / vec2(size.xy);
+    
+    // Slice depth: linear mapping from 0 to 32 km
+    const float dMax = 32.0; // km
+    float tEnd = dMax * (float(texel.z) + 0.5) / float(size.z);
+
+    // Reconstruct view ray in world space (meters)
+    vec4 clipPos = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 worldPos = ubo.InvViewProj * clipPos;
+    worldPos /= worldPos.w;
+    
+    // CameraPosition in UBO is in km and offset by PlanetRadius!
+    vec3 camPosMeters = ubo.CameraPosition.xyz * 1000.0 - vec3(0.0, ubo.params.PlanetRadius * 1000.0, 0.0);
+    vec3 d = normalize(worldPos.xyz - camPosMeters);
+
+    // Camera origin relative to planet center (already in km)
+    vec3 camPosWorld = ubo.CameraPosition.xyz;
+    vec3 o = camPosWorld;
+
+    // Check planet intersection
+    float planetT0, planetT1;
+    if (raySphereIntersection(o, d, ubo.params.PlanetRadius, planetT0, planetT1)) {
+        if (planetT0 > 0.0) {
+            tEnd = min(tEnd, planetT0);
+        }
+    }
+
+    // Raymarch
+    const int steps = 16;
+    float stepSize = tEnd / float(steps);
+
+    vec3 accumulatedScattering = vec3(0.0);
+    float accumulatedTransmittance = 1.0;
+
+    vec3 sunDir = ubo.params.SunDirectionAndIntensity.xyz;
+    float cosTheta = dot(d, sunDir);
+    float phaseR = RayleighPhase(cosTheta);
+    float phaseM = MiePhase(cosTheta, ubo.params.MieExtinction.w);
+
+    for (int i = 0; i < steps; ++i) {
+        float t = (float(i) + 0.5) * stepSize;
+        vec3 p = o + t * d;
+        float rCurrent = length(p);
+        float hCurrent = rCurrent - ubo.params.PlanetRadius;
+
+        if (hCurrent < 0.0 || hCurrent > ubo.params.AtmosphereHeight) {
+            break; // Outside atmosphere
+        }
+
+        float rayleigh, mie, absorption;
+        getAtmosphericDensities(ubo.params, hCurrent, rayleigh, mie, absorption);
+
+        vec3 extRayleigh = ubo.params.RayleighScattering.rgb * rayleigh;
+        vec3 extMie = ubo.params.MieExtinction.rgb * mie;
+        vec3 extAbsorption = ubo.params.AbsorptionExtinction.rgb * absorption;
+        vec3 stepExtinction = extRayleigh + extMie + extAbsorption;
+
+        float stepTransmittance = exp(-dot(stepExtinction, vec3(1.0/3.0)) * stepSize);
+
+        // Transmittance to sun
+        float muSCurrent = dot(p, sunDir) / rCurrent;
+        vec3 transmittanceToSun = getTransmittance(ubo.params, transmittanceLUT, rCurrent, muSCurrent);
+
+        // Multi scattering
+        vec3 multiScat = vec3(0.0);
+        if (ubo.AtmosphereFlags.x > 0.5) {
+            vec2 uvMS = vec2((muSCurrent + 1.0) / 2.0, hCurrent / ubo.params.AtmosphereHeight);
+            multiScat = texture(multiScatLUT, uvMS).rgb;
+        }
+
+        // Radiance scattering
+        vec3 scatRayleigh = ubo.params.RayleighScattering.rgb * rayleigh * phaseR;
+        vec3 scatMie = ubo.params.MieScattering.rgb * mie * phaseM;
+        vec3 scatMS = (ubo.params.RayleighScattering.rgb * rayleigh + ubo.params.MieScattering.rgb * mie) * multiScat;
+
+        vec3 stepScattering = (scatRayleigh + scatMie) * transmittanceToSun + scatMS;
+
+        accumulatedScattering += accumulatedTransmittance * stepScattering * stepSize;
+        accumulatedTransmittance *= stepTransmittance;
+    }
+
+    imageStore(outAerialPerspectiveLUT, texel, vec4(accumulatedScattering, accumulatedTransmittance));
+}

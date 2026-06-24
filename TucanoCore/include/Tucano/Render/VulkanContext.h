@@ -37,6 +37,7 @@ public:
     inline const std::vector<VkImageView>& GetSwapchainImageViews() const { return m_SwapchainImageViews; }
     inline VmaAllocator GetAllocator() const { return m_Allocator; }
     inline VkCommandPool GetCommandPool() const { return m_CommandPool; }
+    inline Window* GetWindow() const { return m_Window; }
 
 private:
     void CreateInstance();

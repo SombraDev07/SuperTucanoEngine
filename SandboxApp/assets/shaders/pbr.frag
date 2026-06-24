@@ -1,4 +1,5 @@
 #version 450
+#include "atmosphere_common.glsl"
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec3 fragNormal;
@@ -14,11 +15,24 @@ layout(push_constant) uniform Push {
     float roughnessFactor;
 } push;
 
+layout(set = 0, binding = 0) uniform UniformBufferObject {
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+layout(std140, set = 0, binding = 1) uniform AtmosphereUBO {
+    AtmosphereParameters params;
+    vec4 CameraPosition;
+    mat4 InvViewProj;
+    vec4 PostProcessParams; // x = exposure, y = gamma, zw = viewportSize
+    vec4 AtmosphereFlags;   // x = EnableMultiScattering, y = EnableAerialPerspective, z = SkyIntensity, w = padding
+} atmosUbo;
+
+layout(set = 0, binding = 5) uniform sampler3D aerialPerspectiveLUT;
+
 layout(set = 1, binding = 0) uniform sampler2D albedoMap;
 layout(set = 1, binding = 1) uniform sampler2D normalMap;
 layout(set = 1, binding = 2) uniform sampler2D metallicRoughnessMap;
-
-const float PI = 3.14159265359;
 
 // GGX/Towbridge-Reitz normal distribution
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
@@ -32,7 +46,7 @@ float DistributionGGX(vec3 N, vec3 H, float roughness) {
     return num / max(denom, 0.0000001);
 }
 
-// Schlick-GGX geometry shadowing
+// Geometry shadowing
 float GeometrySchlickGGX(float NdotV, float roughness) {
     float r = (roughness + 1.0);
     float k = (r * r) / 8.0;
@@ -55,17 +69,18 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0) {
 }
 
 void main() {
-    // Simple directional light hardcoded for now
-    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
-    vec3 lightColor = vec3(1.0, 1.0, 1.0) * 3.0; // 3 intensity
+    // Dynamic lighting from Atmosphere settings
+    vec3 lightDir = atmosUbo.params.SunDirectionAndIntensity.xyz;
+    vec3 lightColor = atmosUbo.params.SunColor.rgb * atmosUbo.params.SunDirectionAndIntensity.w;
+    // CameraPosition in UBO is in km and offset by PlanetRadius; convert back to meters
+    vec3 camPos = atmosUbo.CameraPosition.xyz * 1000.0 - vec3(0.0, atmosUbo.params.PlanetRadius * 1000.0, 0.0);
 
-    vec3 camPos = vec3(0.0, 0.0, -3.0); // Simple cam pos
     // Read textures
     vec4 albedoTex = texture(albedoMap, fragTexCoord);
     vec3 normalTex = texture(normalMap, fragTexCoord).rgb;
     vec3 mrTex = texture(metallicRoughnessMap, fragTexCoord).rgb;
 
-    // Calculate normal using screen-space derivatives for TBN matrix
+    // Calculate normal
     vec3 N = normalize(fragNormal);
     if (!gl_FrontFacing) {
         N = -N;
@@ -107,7 +122,7 @@ void main() {
     vec3 F    = FresnelSchlick(max(dot(H, V), 0.0), F0);       
         
     vec3 numerator    = NDF * G * F; 
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
     vec3 specular     = numerator / denominator;
         
     vec3 kS = F;
@@ -117,13 +132,29 @@ void main() {
     float NdotL = max(dot(N, L), 0.0);        
     vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
-    vec3 ambient = vec3(0.03) * albedo * 1.0; // Hardcoded AO
+    vec3 ambient = vec3(0.03) * albedo * 1.0; // Dynamic ambient could sample Sky-View LUT but keep standard for now
     vec3 color = ambient + Lo;
 
-    // HDR tonemapping
-    color = color / (color + vec3(1.0));
-    // Gamma correction
-    color = pow(color, vec3(1.0/2.2)); 
+    // Apply 3D Aerial Perspective Fog
+    float depth = length(fragPosWorld - camPos);
+    if (atmosUbo.AtmosphereFlags.y > 0.5) {
+        vec2 screenUV = gl_FragCoord.xy / atmosUbo.PostProcessParams.zw;
+        // Aerial Perspective LUT is parametrized in km
+        const float dMax = 32.0; // km (matches compute shader)
+        float depthKm = depth * 0.001;
+        vec3 apUV = vec3(screenUV, clamp(depthKm / dMax, 0.0, 1.0));
+        vec4 ap = texture(aerialPerspectiveLUT, apUV);
+
+        // Fog scattering and transmittance attenuation
+        color = color * ap.a + ap.rgb;
+    }
+
+    // Dynamic exposure & gamma
+    float exposure = atmosUbo.PostProcessParams.x;
+    float gamma = atmosUbo.PostProcessParams.y;
+
+    color = vec3(1.0) - exp(-color * exposure);
+    color = pow(color, vec3(1.0 / gamma));
 
     outColor = vec4(color, push.albedoFactor.a);
 }

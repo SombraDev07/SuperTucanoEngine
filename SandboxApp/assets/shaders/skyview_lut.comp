@@ -1,0 +1,134 @@
+#version 450
+#include "atmosphere_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) writeonly uniform image2D outSkyViewLUT;
+layout(set = 0, binding = 1) uniform sampler2D transmittanceLUT;
+layout(set = 0, binding = 2) uniform sampler2D multiScatLUT;
+
+layout(std140, set = 0, binding = 3) uniform AtmosphereUBO {
+    AtmosphereParameters params;
+    vec4 CameraPosition; // xyz = world camera position, w = dummy
+    mat4 InvViewProj;
+    vec4 PostProcessParams;
+    vec4 AtmosphereFlags; // x = EnableMultiScattering, y = EnableAerialPerspective, z = SkyIntensity, w = padding
+} ubo;
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outSkyViewLUT);
+    if (texel.x >= size.x || texel.y >= size.y) return;
+
+    vec2 uv = (vec2(texel) + 0.5) / vec2(size);
+
+    // Dynamic camera height
+    // Offset camera position is already computed in C++
+    vec3 camPosWorld = ubo.CameraPosition.xyz;
+    float r = length(camPosWorld);
+    
+    // Set up local coordinate frame where camera is at (0, r, 0)
+    // The zenith axis is Y
+    vec3 o = vec3(0.0, r, 0.0);
+    
+    // Find sun direction in local frame
+    vec3 sunDirWorld = ubo.params.SunDirectionAndIntensity.xyz;
+    vec3 zenithWorld = camPosWorld / r;
+    float muS = dot(zenithWorld, sunDirWorld);
+    
+    // We can assume local sun direction lies in XY plane
+    vec3 s = vec3(sqrt(max(0.0, 1.0 - muS * muS)), muS, 0.0);
+
+    float theta, phi;
+    UVToSkyViewParams(ubo.params, uv, r, theta, phi);
+
+    // View direction in local frame
+    vec3 d = vec3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi));
+
+    // Raymarch
+    float t0, t1;
+    float rAtmos = ubo.params.PlanetRadius + ubo.params.AtmosphereHeight;
+    if (!raySphereIntersection(o, d, rAtmos, t0, t1)) {
+        imageStore(outSkyViewLUT, texel, vec4(0.0));
+        return;
+    }
+    
+    float start = max(0.0, t0);
+    float end = t1;
+    
+    float planetT0, planetT1;
+    bool hitPlanet = false;
+    if (raySphereIntersection(o, d, ubo.params.PlanetRadius, planetT0, planetT1)) {
+        if (planetT0 > 0.0) {
+            end = min(end, planetT0);
+            hitPlanet = true;
+        }
+    }
+
+    if (start >= end) {
+        imageStore(outSkyViewLUT, texel, vec4(0.0));
+        return;
+    }
+
+    const int steps = 30;
+    float stepSize = (end - start) / float(steps);
+
+    vec3 accumulatedScattering = vec3(0.0);
+    vec3 accumulatedTransmittance = vec3(1.0);
+
+    float cosTheta = dot(d, s);
+    float phaseR = RayleighPhase(cosTheta);
+    float phaseM = MiePhase(cosTheta, ubo.params.MieExtinction.w);
+
+    for (int i = 0; i < steps; ++i) {
+        float t = start + (float(i) + 0.5) * stepSize;
+        vec3 p = o + t * d;
+        float rCurrent = length(p);
+        float hCurrent = rCurrent - ubo.params.PlanetRadius;
+
+        float rayleigh, mie, absorption;
+        getAtmosphericDensities(ubo.params, hCurrent, rayleigh, mie, absorption);
+
+        vec3 extRayleigh = ubo.params.RayleighScattering.rgb * rayleigh;
+        vec3 extMie = ubo.params.MieExtinction.rgb * mie;
+        vec3 extAbsorption = ubo.params.AbsorptionExtinction.rgb * absorption;
+        vec3 stepExtinction = extRayleigh + extMie + extAbsorption;
+
+        vec3 stepTransmittance = exp(-stepExtinction * stepSize);
+
+        // Transmittance to Sun
+        float muSCurrent = dot(p, s) / rCurrent;
+        vec3 transmittanceToSun = getTransmittance(ubo.params, transmittanceLUT, rCurrent, muSCurrent);
+
+        // Multiple scattering lookup
+        vec3 multiScat = vec3(0.0);
+        if (ubo.AtmosphereFlags.x > 0.5) {
+            vec2 uvMS = vec2((muSCurrent + 1.0) / 2.0, hCurrent / ubo.params.AtmosphereHeight);
+            multiScat = texture(multiScatLUT, uvMS).rgb;
+        }
+
+        // Combined scattering
+        vec3 scatRayleigh = ubo.params.RayleighScattering.rgb * rayleigh * phaseR;
+        vec3 scatMie = ubo.params.MieScattering.rgb * mie * phaseM;
+        
+        // Isotropic multiple scattering contribution
+        vec3 scatMS = (ubo.params.RayleighScattering.rgb * rayleigh + ubo.params.MieScattering.rgb * mie) * multiScat;
+
+        vec3 stepScattering = (scatRayleigh + scatMie) * transmittanceToSun + scatMS;
+
+        accumulatedScattering += accumulatedTransmittance * stepScattering * stepSize;
+        accumulatedTransmittance *= stepTransmittance;
+    }
+
+    // Ground albedo contribution
+    if (hitPlanet) {
+        vec3 p = o + end * d;
+        float rCurrent = length(p);
+        float muSCurrent = dot(p, s) / rCurrent;
+        vec3 transmittanceToSun = getTransmittance(ubo.params, transmittanceLUT, rCurrent, muSCurrent);
+        vec3 groundBounce = (ubo.params.GroundAlbedo.rgb / PI) * transmittanceToSun * max(0.0, muSCurrent) * ubo.params.SunDirectionAndIntensity.w;
+        accumulatedScattering += accumulatedTransmittance * groundBounce;
+    }
+
+    imageStore(outSkyViewLUT, texel, vec4(accumulatedScattering, 1.0));
+}

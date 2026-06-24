@@ -11,6 +11,14 @@ out/
 *.lib
 *.exp
 
+# Compiled shaders and temp build artifacts
+*.spv
+/offset_test*
+/range_test*
+/comp.spv
+/frag.spv
+/vert.spv
+
 # IDEs
 .idea/
 .vscode/
