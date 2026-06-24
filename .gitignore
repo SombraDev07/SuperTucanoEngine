@@ -1,0 +1,26 @@
+# Build and binaries
+build/
+bin/
+lib/
+out/
+.vs/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# IDEs
+.idea/
+.vscode/
+
+# User specific and temp files
+*.user
+*.suo
+*.temp
+*.tmp
+.DS_Store
+
+# Agent / Tooling (If applicable)
+.gemini/
