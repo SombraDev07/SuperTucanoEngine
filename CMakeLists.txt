@@ -73,7 +73,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(volk)
 
 # 7. stb_image (Texture loading)
-# Because STB is a single header, FetchContent just pulls the repo, we'll create an interface library for it.
 FetchContent_Declare(
     stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
@@ -82,6 +81,16 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(stb)
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
+
+# 8. cgltf (glTF loader)
+FetchContent_Declare(
+    cgltf
+    GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+    GIT_TAG        v1.14
+)
+FetchContent_MakeAvailable(cgltf)
+add_library(cgltf INTERFACE)
+target_include_directories(cgltf INTERFACE ${cgltf_SOURCE_DIR})
 
 # Output directories for clean build artifacts
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

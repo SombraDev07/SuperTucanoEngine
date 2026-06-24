@@ -36,6 +36,7 @@ public:
     inline VkExtent2D GetSwapchainExtent() const { return m_SwapchainExtent; }
     inline const std::vector<VkImageView>& GetSwapchainImageViews() const { return m_SwapchainImageViews; }
     inline VmaAllocator GetAllocator() const { return m_Allocator; }
+    inline VkCommandPool GetCommandPool() const { return m_CommandPool; }
 
 private:
     void CreateInstance();
@@ -46,6 +47,7 @@ private:
     void CreateAllocator();
     void CreateSwapchain();
     void CreateImageViews();
+    void CreateCommandPool();
 
     // Helpers
     bool CheckValidationLayerSupport();
@@ -78,6 +80,8 @@ private:
     VkFormat m_SwapchainImageFormat;
     VkExtent2D m_SwapchainExtent;
     std::vector<VkImageView> m_SwapchainImageViews;
+
+    VkCommandPool m_CommandPool;
 
     const std::vector<const char*> m_ValidationLayers = {
         "VK_LAYER_KHRONOS_validation"

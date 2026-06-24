@@ -34,9 +34,13 @@ VulkanContext::VulkanContext(Window* window) : m_Window(window) {
     CreateAllocator();
     CreateSwapchain();
     CreateImageViews();
+    CreateCommandPool();
 }
 
 VulkanContext::~VulkanContext() {
+    vkDeviceWaitIdle(m_Device);
+
+    vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
     for (auto imageView : m_SwapchainImageViews) {
         vkDestroyImageView(m_Device, imageView, nullptr);
     }
@@ -143,6 +147,11 @@ void VulkanContext::CreateLogicalDevice() {
     }
 
     VkPhysicalDeviceFeatures deviceFeatures{};
+    VkPhysicalDeviceFeatures supportedFeatures;
+    vkGetPhysicalDeviceFeatures(m_PhysicalDevice, &supportedFeatures);
+    if (supportedFeatures.samplerAnisotropy) {
+        deviceFeatures.samplerAnisotropy = VK_TRUE;
+    }
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -370,6 +379,19 @@ VkExtent2D VulkanContext::ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capab
         actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
         actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
         return actualExtent;
+    }
+}
+
+void VulkanContext::CreateCommandPool() {
+    QueueFamilyIndices queueFamilyIndices = FindQueueFamilies(m_PhysicalDevice);
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamilyIndices.GraphicsFamily.value();
+
+    if (vkCreateCommandPool(m_Device, &poolInfo, nullptr, &m_CommandPool) != VK_SUCCESS) {
+        TUCANO_CORE_CRITICAL("Failed to create transient command pool!");
     }
 }
 

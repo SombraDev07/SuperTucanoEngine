@@ -2,12 +2,18 @@
 #include "Tucano/Render/ShaderCompiler.h"
 #include "Tucano/Core/Logger.h"
 #include "Tucano/Mesh/Mesh.h"
+#include "Tucano/ECS/Components.h"
+#include "Tucano/Render/Texture2D.h"
 #include <array>
 
 namespace Tucano {
 
 struct PushConstants {
     glm::mat4 model;
+    glm::vec4 albedoFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    float padding[2];
 };
 
 Renderer::Renderer(VulkanContext* context) : m_Context(context) {
@@ -21,6 +27,7 @@ Renderer::Renderer(VulkanContext* context) : m_Context(context) {
     CreateCommandPool();
     CreateCommandBuffers();
     CreateSyncObjects();
+    CreateDefaultTextures();
 }
 
 Renderer::~Renderer() {
@@ -51,6 +58,9 @@ Renderer::~Renderer() {
     }
     vkDestroyDescriptorPool(device, m_DescriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, m_DescriptorSetLayout, nullptr);
+
+    vkDestroyDescriptorPool(device, m_MaterialDescriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(device, m_MaterialDescriptorSetLayout, nullptr);
 }
 
 void Renderer::InitPipeline(const std::string& vertFilepath, const std::string& fragFilepath) {
@@ -107,7 +117,7 @@ void Renderer::InitPipeline(const std::string& vertFilepath, const std::string& 
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -141,14 +151,16 @@ void Renderer::InitPipeline(const std::string& vertFilepath, const std::string& 
     dynamicState.pDynamicStates = dynamicStates.data();
 
     VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(PushConstants);
 
+    std::array<VkDescriptorSetLayout, 2> setLayouts = { m_DescriptorSetLayout, m_MaterialDescriptorSetLayout };
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_DescriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
@@ -314,6 +326,39 @@ void Renderer::CreateDescriptorSetLayout() {
     if (vkCreateDescriptorSetLayout(m_Context->GetDevice(), &layoutInfo, nullptr, &m_DescriptorSetLayout) != VK_SUCCESS) {
         TUCANO_CORE_CRITICAL("Failed to create descriptor set layout!");
     }
+
+    // Material Layout (Set 1)
+    std::array<VkDescriptorSetLayoutBinding, 3> matBindings{};
+    
+    // Albedo
+    matBindings[0].binding = 0;
+    matBindings[0].descriptorCount = 1;
+    matBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    matBindings[0].pImmutableSamplers = nullptr;
+    matBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Normal
+    matBindings[1].binding = 1;
+    matBindings[1].descriptorCount = 1;
+    matBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    matBindings[1].pImmutableSamplers = nullptr;
+    matBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // MetallicRoughness
+    matBindings[2].binding = 2;
+    matBindings[2].descriptorCount = 1;
+    matBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    matBindings[2].pImmutableSamplers = nullptr;
+    matBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo matLayoutInfo{};
+    matLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    matLayoutInfo.bindingCount = static_cast<uint32_t>(matBindings.size());
+    matLayoutInfo.pBindings = matBindings.data();
+
+    if (vkCreateDescriptorSetLayout(m_Context->GetDevice(), &matLayoutInfo, nullptr, &m_MaterialDescriptorSetLayout) != VK_SUCCESS) {
+        TUCANO_CORE_CRITICAL("Failed to create material descriptor set layout!");
+    }
 }
 
 void Renderer::CreateDescriptorPool() {
@@ -329,6 +374,23 @@ void Renderer::CreateDescriptorPool() {
 
     if (vkCreateDescriptorPool(m_Context->GetDevice(), &poolInfo, nullptr, &m_DescriptorPool) != VK_SUCCESS) {
         TUCANO_CORE_CRITICAL("Failed to create descriptor pool!");
+    }
+
+    // Material Descriptor Pool (large enough for many materials)
+    std::array<VkDescriptorPoolSize, 1> matPoolSizes{};
+    matPoolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    matPoolSizes[0].descriptorCount = 3000; // 1000 materials * 3 textures
+
+    VkDescriptorPoolCreateInfo matPoolInfo{};
+    matPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    matPoolInfo.poolSizeCount = static_cast<uint32_t>(matPoolSizes.size());
+    matPoolInfo.pPoolSizes = matPoolSizes.data();
+    matPoolInfo.maxSets = 1000;
+    // Allow freeing individual descriptor sets
+    matPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+
+    if (vkCreateDescriptorPool(m_Context->GetDevice(), &matPoolInfo, nullptr, &m_MaterialDescriptorPool) != VK_SUCCESS) {
+        TUCANO_CORE_CRITICAL("Failed to create material descriptor pool!");
     }
 }
 
@@ -402,6 +464,7 @@ void Renderer::CreateSyncObjects() {
     m_ImageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_RenderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_InFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    m_ImagesInFlight.resize(m_Context->GetSwapchainImageViews().size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -420,6 +483,17 @@ void Renderer::CreateSyncObjects() {
     }
 }
 
+void Renderer::CreateDefaultTextures() {
+    uint8_t whitePixel[4] = { 255, 255, 255, 255 };
+    m_DefaultWhiteTexture = std::make_shared<Texture2D>(m_Context, whitePixel, 1, 1, 4, true);
+
+    uint8_t normalPixel[4] = { 128, 128, 255, 255 };
+    m_DefaultNormalTexture = std::make_shared<Texture2D>(m_Context, normalPixel, 1, 1, 4, false);
+
+    m_DefaultMaterial = std::make_shared<Material>();
+    m_DefaultMaterial->BuildDescriptorSet(this);
+}
+
 void Renderer::DrawFrame(Camera* camera, World* world) {
     if (!m_GraphicsPipeline) return; // Skip if pipeline failed
 
@@ -428,6 +502,11 @@ void Renderer::DrawFrame(Camera* camera, World* world) {
 
     uint32_t imageIndex;
     vkAcquireNextImageKHR(device, m_Context->GetSwapchain(), UINT64_MAX, m_ImageAvailableSemaphores[m_CurrentFrame], VK_NULL_HANDLE, &imageIndex);
+
+    if (m_ImagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(device, 1, &m_ImagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    m_ImagesInFlight[imageIndex] = m_InFlightFences[m_CurrentFrame];
 
     // Update UBO
     UniformBufferObject ubo{};
@@ -479,15 +558,44 @@ void Renderer::DrawFrame(Camera* camera, World* world) {
 
     vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &m_DescriptorSets[m_CurrentFrame], 0, nullptr);
 
-    for (auto& obj : world->GetObjects()) {
-        if (!obj.Mesh) continue;
+    auto view = world->GetRegistry().view<TransformComponent, MeshComponent>();
+    for (auto entity : view) {
+        auto& transform = view.get<TransformComponent>(entity);
+        auto& meshComp = view.get<MeshComponent>(entity);
+
+        if (!meshComp.Mesh) continue;
 
         PushConstants push{};
-        push.model = obj.Transform.GetModelMatrix();
-        vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
+        push.model = transform.Transform.GetModelMatrix();
+        
+        if (world->GetRegistry().all_of<MaterialComponent>(entity)) {
+            auto& matComp = world->GetRegistry().get<MaterialComponent>(entity);
+            if (matComp.Material) {
+                push.albedoFactor = matComp.Material->GetProperties().AlbedoFactor;
+                push.metallicFactor = matComp.Material->GetProperties().MetallicFactor;
+                push.roughnessFactor = matComp.Material->GetProperties().RoughnessFactor;
 
-        obj.Mesh->Bind(m_CommandBuffers[m_CurrentFrame]);
-        obj.Mesh->Draw(m_CommandBuffers[m_CurrentFrame]);
+                matComp.Material->BuildDescriptorSet(this);
+                VkDescriptorSet matSet = matComp.Material->GetDescriptorSet();
+                if (matSet != VK_NULL_HANDLE) {
+                    vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 1, 1, &matSet, 0, nullptr);
+                }
+            }
+        } else {
+            push.albedoFactor = glm::vec4(1.0f);
+            push.metallicFactor = 0.0f;
+            push.roughnessFactor = 0.5f;
+            
+            VkDescriptorSet defSet = m_DefaultMaterial->GetDescriptorSet();
+            if (defSet != VK_NULL_HANDLE) {
+                vkCmdBindDescriptorSets(m_CommandBuffers[m_CurrentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 1, 1, &defSet, 0, nullptr);
+            }
+        }
+
+        vkCmdPushConstants(m_CommandBuffers[m_CurrentFrame], m_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &push);
+
+        meshComp.Mesh->Bind(m_CommandBuffers[m_CurrentFrame]);
+        meshComp.Mesh->Draw(m_CommandBuffers[m_CurrentFrame]);
     }
 
     vkCmdEndRenderPass(m_CommandBuffers[m_CurrentFrame]);

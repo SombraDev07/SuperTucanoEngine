@@ -21,6 +21,12 @@ public:
     void DrawFrame(Camera* camera, World* world);
     void WaitIdle();
 
+    VkDescriptorSetLayout GetMaterialDescriptorSetLayout() const { return m_MaterialDescriptorSetLayout; }
+    VkDescriptorPool GetMaterialDescriptorPool() const { return m_MaterialDescriptorPool; }
+    std::shared_ptr<class Texture2D> GetDefaultWhiteTexture() const { return m_DefaultWhiteTexture; }
+    std::shared_ptr<class Texture2D> GetDefaultNormalTexture() const { return m_DefaultNormalTexture; }
+    VulkanContext* GetContext() const { return m_Context; }
+
 private:
     void CreateDepthResources();
     void CreateRenderPass();
@@ -32,6 +38,7 @@ private:
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
+    void CreateDefaultTextures();
 
     void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VmaMemoryUsage memoryUsage, VkImage& image, VmaAllocation& allocation);
     VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
@@ -59,12 +66,20 @@ private:
     VkDescriptorPool m_DescriptorPool;
     std::vector<VkDescriptorSet> m_DescriptorSets;
 
+    VkDescriptorSetLayout m_MaterialDescriptorSetLayout;
+    VkDescriptorPool m_MaterialDescriptorPool;
+
+    std::shared_ptr<class Texture2D> m_DefaultWhiteTexture;
+    std::shared_ptr<class Texture2D> m_DefaultNormalTexture;
+    std::shared_ptr<class Material> m_DefaultMaterial;
+
     VkCommandPool m_CommandPool;
     std::vector<VkCommandBuffer> m_CommandBuffers;
 
     std::vector<VkSemaphore> m_ImageAvailableSemaphores;
     std::vector<VkSemaphore> m_RenderFinishedSemaphores;
     std::vector<VkFence> m_InFlightFences;
+    std::vector<VkFence> m_ImagesInFlight;
 
     uint32_t m_CurrentFrame = 0;
     const int MAX_FRAMES_IN_FLIGHT = 2;

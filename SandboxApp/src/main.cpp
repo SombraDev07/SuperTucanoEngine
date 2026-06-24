@@ -8,6 +8,9 @@
 #include "Tucano/World/World.h"
 #include "Tucano/Mesh/Mesh.h"
 
+#include "Tucano/ECS/Components.h"
+#include "Tucano/Asset/ModelLoader.h"
+
 #include <GLFW/glfw3.h>
 #include <chrono>
 
@@ -23,32 +26,24 @@ int main() {
     VulkanContext vulkanContext(&window);
     Renderer renderer(&vulkanContext);
 
-    renderer.InitPipeline("assets/shaders/basic_3d.vert", "assets/shaders/basic_3d.frag");
+    renderer.InitPipeline("assets/shaders/pbr.vert", "assets/shaders/pbr.frag");
 
     World world;
     
-    // Create Meshes
-    auto cubeMesh = Mesh::CreateCube(&vulkanContext);
-    auto planeMesh = Mesh::CreatePlane(&vulkanContext);
-
     // Add Ground
-    RenderableObject ground(planeMesh);
-    ground.Transform.Scale = glm::vec3(10.0f, 1.0f, 10.0f);
-    ground.Transform.Position = glm::vec3(0.0f, -1.0f, 0.0f);
-    world.AddObject(ground);
+    auto planeMesh = Mesh::CreatePlane(&vulkanContext);
+    auto groundEntity = world.CreateEntity("Ground");
+    auto& groundTransform = world.GetRegistry().get<TransformComponent>(groundEntity).Transform;
+    groundTransform.Scale = glm::vec3(10.0f, 1.0f, 10.0f);
+    groundTransform.Position = glm::vec3(0.0f, -1.0f, 0.0f);
+    world.GetRegistry().emplace<MeshComponent>(groundEntity, planeMesh);
 
-    // Add some cubes
-    for (int x = -2; x <= 2; x += 2) {
-        for (int z = -2; z <= 2; z += 2) {
-            RenderableObject cube(cubeMesh);
-            cube.Transform.Position = glm::vec3(x, 0.0f, z);
-            world.AddObject(cube);
-        }
-    }
+    // Load glTF Box
+    ModelLoader::LoadGLTF("assets/models/Industrial_BrickRuin_Window_Brick_Straight_01_vdcjcfx_Raw.gltf", world, &vulkanContext);
 
-    Camera camera(45.0f, (float)window.GetWidth() / (float)window.GetHeight(), 0.1f, 100.0f);
+    Camera camera(45.0f, (float)window.GetWidth() / (float)window.GetHeight(), 0.1f, 10000.0f);
     FPSCameraController cameraController(&camera);
-    cameraController.SetPosition(glm::vec3(0.0f, 2.0f, 10.0f));
+    cameraController.SetPosition(glm::vec3(0.0f, 10.0f, 30.0f));
 
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frames = 0;
@@ -65,9 +60,13 @@ int main() {
         cameraController.Update(deltaTime);
 
         // Update some objects (e.g., rotate cubes)
-        for (size_t i = 1; i < world.GetObjects().size(); i++) {
-            auto& obj = world.GetObjects()[i];
-            obj.Transform.Rotate(glm::vec3(0.0f, 1.0f * deltaTime, 0.0f));
+        auto view = world.GetRegistry().view<TransformComponent, TagComponent>();
+        for (auto entity : view) {
+            auto& tag = view.get<TagComponent>(entity);
+            if (tag.Tag == "Cube") {
+                auto& transform = view.get<TransformComponent>(entity).Transform;
+                transform.Rotate(glm::vec3(0.0f, 1.0f * deltaTime, 0.0f));
+            }
         }
 
         renderer.DrawFrame(&camera, &world);

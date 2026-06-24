@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Tucano/World/RenderableObject.h"
-#include <vector>
+#include <entt/entt.hpp>
+#include <string>
 
 namespace Tucano {
 
@@ -9,15 +9,18 @@ class World {
 public:
     World() = default;
 
-    void AddObject(const RenderableObject& object) {
-        m_Objects.push_back(object);
-    }
+    // Create an empty entity with a TransformComponent and TagComponent
+    entt::entity CreateEntity(const std::string& name = std::string());
+    
+    // Destroy an entity
+    void DestroyEntity(entt::entity entity);
 
-    const std::vector<RenderableObject>& GetObjects() const { return m_Objects; }
-    std::vector<RenderableObject>& GetObjects() { return m_Objects; }
+    // Get the underlying registry
+    entt::registry& GetRegistry() { return m_Registry; }
+    const entt::registry& GetRegistry() const { return m_Registry; }
 
 private:
-    std::vector<RenderableObject> m_Objects;
+    entt::registry m_Registry;
 };
 
 } // namespace Tucano
