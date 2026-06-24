@@ -60,8 +60,20 @@ cd build\bin\Debug
 - [x] **Milestone 1**: Core Architecture & Vulkan Init (The Triangle).
 - [x] **Milestone 2**: World Runtime Foundation (Camera, 3D Meshes, Push Constants, Depth).
 - [x] **Milestone 3**: ECS Integration & Asset Pipeline (glTF, Textures, EnTT).
-- [ ] **Milestone 4**: Physically Based Rendering (PBR) & Lighting.
-- [ ] **Milestone 5**: Advanced Rendering (Render Graph, Atmospheric Scattering).
+- [x] **Milestone 4**: Physically Based Rendering (PBR) — GGX/Cook-Torrance, Smith visibility, Schlick Fresnel.
+- [x] **Milestone 5**: Atmospheric Scattering (Hillaire/Bruneton) — Transmittance, Multi-Scattering, Sky-View and Aerial Perspective LUTs, sun disk, std140-correct UBO layout.
+- [ ] **Milestone 6**: Render Graph — declarative pass graph (depth prepass → shadows → opaque → atmosphere → volumetrics → lighting → SSR/SSAO → reflections → transparent → post → tonemap → upscaler → UI). Replaces hardcoded `DrawFrame` ordering.
+- [ ] **Milestone 7**: IBL & BRDF LUT — split-sum approximation, environment probes, complete PBR lighting.
+- [ ] **Milestone 8**: Shadow System — CSM (directional), spot/point shadow maps, PCF/PCSS/EVSM, contact shadows.
+- [ ] **Milestone 9**: Clustered Forward+ — tiled light culling (replace classic forward).
+- [ ] **Milestone 10**: Global Illumination (scalable) — SSGI (low) → DDGI (medium) → RTGI (high) → Path Tracing (ultra).
+- [ ] **Milestone 11**: Screen-Space Reflections → Reflection Probes → Ray Traced Reflections.
+- [ ] **Milestone 12**: Volumetrics — volumetric fog, clouds (Frostbite 2015), light shafts/god rays, height fog.
+- [ ] **Milestone 13**: Occlusion — GTAO/HBAO+ (replace basic SSAO).
+- [ ] **Milestone 14**: Anti-Aliasing & Upscaling — TAA/TAAU + AMD FidelityFX SDK (FSR, CAS, XeSS).
+
+## 📚 Reference Study
+The `TucanoEngine-main/` directory (kept locally, gitignored) contains a fork of DAGOR engine (Gaijin/War Thunder) used as architectural reference for the Render Graph (`daFG`), shadow cascades and driver abstraction layers. It is not part of SuperTucanoEngine.
 
 ---
 *Developed with focus on Performance and Clean Architecture.*
