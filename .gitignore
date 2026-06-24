@@ -32,3 +32,6 @@ out/
 
 # Agent / Tooling (If applicable)
 .gemini/
+
+# Reference / study only: DAGOR engine fork (not part of SuperTucanoEngine)
+/TucanoEngine-main/
