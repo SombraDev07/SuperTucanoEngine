@@ -59,7 +59,7 @@ cd build\bin\Debug
 ## 📜 Roadmap
 - [x] **Milestone 1**: Core Architecture & Vulkan Init (The Triangle).
 - [x] **Milestone 2**: World Runtime Foundation (Camera, 3D Meshes, Push Constants, Depth).
-- [ ] **Milestone 3**: ECS Integration & Asset Pipeline (glTF, Textures, EnTT).
+- [x] **Milestone 3**: ECS Integration & Asset Pipeline (glTF, Textures, EnTT).
 - [ ] **Milestone 4**: Physically Based Rendering (PBR) & Lighting.
 - [ ] **Milestone 5**: Advanced Rendering (Render Graph, Atmospheric Scattering).
 
